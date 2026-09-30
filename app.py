@@ -1,314 +1,432 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
-from pathlib import Path
 
 st.set_page_config(
-    page_title="FoodLens — Delivery Analytics",
-    page_icon="🍔",
+    page_title="FoodLens — Zomato Restaurant Analytics",
+    page_icon="🍽️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# -------------------- Styling --------------------
+# ---------- Styling ----------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
-
-html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-.stApp { background: #0b1020; }
-.block-container { padding: 1.8rem 3rem 3rem; max-width: 1500px; }
-[data-testid="stSidebar"] { background: #10172b; border-right: 1px solid #202943; }
-[data-testid="stSidebar"] * { color: #e8edf8; }
-h1,h2,h3,h4 { font-family: 'Space Grotesk', sans-serif; color: #f7f9fc; }
-p, label, .stMarkdown { color: #aeb8cc; }
-.hero {
-    background: linear-gradient(135deg, #151d38 0%, #10172b 60%, #182441 100%);
-    border: 1px solid #263250; border-radius: 24px; padding: 30px 34px;
-    box-shadow: 0 20px 60px rgba(0,0,0,.18);
-}
-.eyebrow { color:#8fa3ff; font-weight:700; letter-spacing:.12em; text-transform:uppercase; font-size:.75rem; }
-.hero-title { font-family:'Space Grotesk'; font-size:2.65rem; line-height:1.05; color:#fff; margin:.45rem 0 .8rem; }
-.hero-copy { font-size:1rem; color:#aeb8cc; max-width:720px; }
-.kpi {
-    background: linear-gradient(180deg,#141d34,#11182b);
-    border:1px solid #263250; border-radius:18px; padding:20px;
-    min-height:125px;
-}
-.kpi-label { color:#8e9bb3; font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; }
-.kpi-value { color:#fff; font-family:'Space Grotesk'; font-size:1.8rem; font-weight:700; margin-top:7px; }
-.kpi-note { color:#6fd6b1; font-size:.78rem; margin-top:5px; }
-.section { margin-top: 28px; margin-bottom: 12px; }
-.insight {
-    background:#121a2d; border:1px solid #263250; border-left:4px solid #8fa3ff;
-    padding:16px 18px; border-radius:14px; margin-bottom:10px;
-}
-.insight b { color:#fff; }
-.small { font-size:.85rem; color:#8794ab; }
-div[data-testid="stMetric"] { background:#141d34; border:1px solid #263250; padding:14px 16px; border-radius:16px; }
-div[data-testid="stMetric"] label { color:#8e9bb3; }
-div[data-testid="stMetricValue"] { color:#fff; }
-.stButton>button { border-radius:12px; border:1px solid #33415f; background:#19233d; color:#fff; }
-.stButton>button:hover { border-color:#8fa3ff; color:#fff; }
+    .stApp { background: #0b1020; }
+    [data-testid="stSidebar"] { background: #111827; }
+    .block-container { padding-top: 1.5rem; padding-bottom: 2rem; max-width: 1500px; }
+    .hero {
+        padding: 1.4rem 1.6rem;
+        border: 1px solid #263247;
+        border-radius: 18px;
+        background: linear-gradient(135deg, #121a2b, #18233a);
+        margin-bottom: 1rem;
+    }
+    .hero h1 { margin: 0; font-size: 2.3rem; }
+    .hero p { color: #aeb9cc; margin: .45rem 0 0; }
+    .metric-card {
+        background: #121a2b;
+        border: 1px solid #263247;
+        border-radius: 14px;
+        padding: 1rem;
+    }
+    .section-title { margin-top: .6rem; margin-bottom: .3rem; }
+    div[data-testid="stMetric"] {
+        background: #121a2b;
+        border: 1px solid #263247;
+        padding: 12px;
+        border-radius: 14px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------- Data --------------------
-@st.cache_data
-def load_sample():
-    return pd.read_csv(Path("data/food_delivery_sample.csv"), parse_dates=["order_date"])
+DATA_PATH = "data/Zomato_Restaurant_Data2024_2026.csv"
 
-def normalize_columns(data):
-    d = data.copy()
-    d.columns = [str(c).strip().lower().replace(" ", "_") for c in d.columns]
-    return d
+EXPECTED = [
+    "Order_ID", "Order_Date", "Year", "Customer_ID", "Restaurant_ID",
+    "Restaurant_Name", "City", "Area", "Cuisine", "Rating", "Rating_Count",
+    "Average_Cost_for_Two_INR", "Online_Delivery", "Table_Booking",
+    "Restaurant_Type", "Orders_Count", "Average_Order_Value_INR",
+    "Discount_Percent", "Discount_Amount_INR", "Delivery_Fee_INR",
+    "Estimated_Delivery_Minutes", "Order_Status", "Payment_Method",
+    "Gross_Order_Value_INR", "Net_Order_Value_INR"
+]
 
-def prep_data(data):
-    d = normalize_columns(data)
-    if "order_date" in d.columns:
-        d["order_date"] = pd.to_datetime(d["order_date"], errors="coerce")
-    numeric = ["items","subtotal","delivery_fee","discount","total_amount","delivery_time_min","rating"]
-    for c in numeric:
-        if c in d.columns: d[c] = pd.to_numeric(d[c], errors="coerce")
-    if "order_status" not in d.columns: d["order_status"] = "Delivered"
-    if "total_amount" not in d.columns:
-        if "subtotal" in d.columns: d["total_amount"] = d["subtotal"].fillna(0)
-        else: d["total_amount"] = 0
-    return d.dropna(how="all")
+@st.cache_data(show_spinner="Loading the 1,000,000-row Zomato dataset…")
+def load_data(path):
+    df = pd.read_csv(path, low_memory=False)
+    missing = [c for c in EXPECTED if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing expected columns: {missing}")
 
-uploaded = st.sidebar.file_uploader("Upload your CSV dataset", type=["csv"])
-data = prep_data(pd.read_csv(uploaded) if uploaded else load_sample())
+    df["Order_Date"] = pd.to_datetime(df["Order_Date"], dayfirst=True, errors="coerce")
 
-st.sidebar.markdown("### Navigation")
-page = st.sidebar.radio("Go to", ["Overview", "Revenue", "Customers", "Delivery", "Food & Locations", "Dataset", "About"], label_visibility="collapsed")
-st.sidebar.markdown("---")
-st.sidebar.markdown("**FoodLens**")
-st.sidebar.caption("Food Delivery Data Analysis System")
-st.sidebar.caption(f"{len(data):,} records loaded")
-
-# -------------------- Helpers --------------------
-def money(v):
-    v = float(v or 0)
-    if abs(v) >= 1_000_000: return f"₹{v/1_000_000:.2f}M"
-    if abs(v) >= 100_000: return f"₹{v/100_000:.2f}L"
-    return f"₹{v:,.0f}"
-
-def delivered(d):
-    if "order_status" in d:
-        return d[d["order_status"].astype(str).str.lower().eq("delivered")].copy()
-    return d.copy()
-
-d = delivered(data)
-total_orders = len(data)
-revenue = d["total_amount"].sum()
-avg_order = d["total_amount"].mean() if len(d) else 0
-avg_rating = d["rating"].mean() if "rating" in d else 0
-customers = d["customer_id"].nunique() if "customer_id" in d else 0
-
-# -------------------- Overview --------------------
-if page == "Overview":
-    st.markdown("""
-    <div class="hero">
-      <div class="eyebrow">FOOD DELIVERY INTELLIGENCE</div>
-      <div class="hero-title">Turn delivery data into decisions. 🍔</div>
-      <div class="hero-copy">FoodLens transforms raw order records into an interactive analytics workspace for revenue, customers, food preferences, locations, ratings and delivery performance.</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<div class="section"></div>', unsafe_allow_html=True)
-    c1,c2,c3,c4,c5 = st.columns(5)
-    cards = [
-        ("TOTAL ORDERS", f"{total_orders:,}", "All records"),
-        ("REVENUE", money(revenue), "Delivered orders"),
-        ("AVG ORDER", money(avg_order), "Per delivered order"),
-        ("CUSTOMERS", f"{customers:,}", "Unique customers"),
-        ("AVG RATING", f"{avg_rating:.1f} ★", "Customer rating"),
+    numeric_cols = [
+        "Year", "Rating", "Rating_Count", "Average_Cost_for_Two_INR",
+        "Orders_Count", "Average_Order_Value_INR", "Discount_Percent",
+        "Discount_Amount_INR", "Delivery_Fee_INR",
+        "Estimated_Delivery_Minutes", "Gross_Order_Value_INR",
+        "Net_Order_Value_INR"
     ]
-    for col,(lab,val,note) in zip([c1,c2,c3,c4,c5],cards):
-        with col:
-            st.markdown(f'<div class="kpi"><div class="kpi-label">{lab}</div><div class="kpi-value">{val}</div><div class="kpi-note">{note}</div></div>', unsafe_allow_html=True)
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    st.markdown("### Performance snapshot")
-    left,right = st.columns([1.6,1])
-    with left:
-        if "order_date" in d:
-            trend = d.groupby(pd.Grouper(key="order_date", freq="MS")).agg(orders=("order_id","count"), revenue=("total_amount","sum")).reset_index()
-            fig = px.area(trend, x="order_date", y="orders", template="plotly_dark", title="Monthly order volume")
-            fig.update_traces(line_color="#8fa3ff", fillcolor="rgba(143,163,255,.18)")
-            fig.update_layout(height=350, margin=dict(l=10,r=10,t=50,b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
-    with right:
-        if "food_category" in d:
-            cat = d.groupby("food_category").agg(orders=("order_id","count"), revenue=("total_amount","sum")).reset_index().sort_values("orders", ascending=False)
-            fig = px.bar(cat.head(7), x="orders", y="food_category", orientation="h", template="plotly_dark", title="Top food categories")
-            fig.update_layout(height=350, margin=dict(l=10,r=10,t=50,b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            fig.update_traces(marker_color="#ff9f6e")
-            st.plotly_chart(fig, use_container_width=True)
+    # Keep a clean copy for analysis.
+    df = df.dropna(subset=["Order_ID"]).copy()
+    return df
 
-    st.markdown("### Key insights")
-    insights = []
-    if "food_category" in d and len(d):
-        x = d["food_category"].value_counts().index[0]
-        insights.append(f"<b>Most ordered category:</b> {x} leads the order mix.")
-    if "city" in d and len(d):
-        x = d.groupby("city")["total_amount"].sum().idxmax()
-        insights.append(f"<b>Revenue hotspot:</b> {x} contributes the most revenue in this dataset.")
-    if "delivery_time_min" in d and "rating" in d and len(d) > 2:
-        corr = d["delivery_time_min"].corr(d["rating"])
-        direction = "negative" if corr < 0 else "positive"
-        insights.append(f"<b>Delivery & ratings:</b> the Pearson correlation is {corr:.2f}, indicating a {direction} relationship.")
-    if "order_status" in data:
-        cancel = (data["order_status"].astype(str).str.lower()=="cancelled").mean()*100
-        insights.append(f"<b>Cancellation rate:</b> {cancel:.1f}% of all recorded orders are marked cancelled.")
-    for i in insights:
-        st.markdown(f'<div class="insight">💡 {i}</div>', unsafe_allow_html=True)
+try:
+    df = load_data(DATA_PATH)
+except Exception as e:
+    st.error(f"Could not load the Zomato dataset: {e}")
+    st.stop()
 
-# -------------------- Revenue --------------------
+# ---------- Sidebar ----------
+st.sidebar.title("🍽️ FoodLens")
+st.sidebar.caption("Zomato Restaurant Data Analytics")
+st.sidebar.divider()
+
+page = st.sidebar.radio(
+    "Dashboard",
+    ["Overview", "Revenue", "Customers", "Delivery", "Restaurants & Food", "Data Explorer", "About"]
+)
+
+st.sidebar.divider()
+st.sidebar.markdown("### Dataset")
+st.sidebar.write(f"**Rows:** {len(df):,}")
+st.sidebar.write(f"**Columns:** {len(df.columns)}")
+if df["Order_Date"].notna().any():
+    st.sidebar.write(
+        f"**Period:** {df['Order_Date'].min():%d %b %Y} – {df['Order_Date'].max():%d %b %Y}"
+    )
+
+# ---------- Filters ----------
+st.sidebar.markdown("### Filters")
+
+years = sorted(df["Year"].dropna().astype(int).unique().tolist())
+selected_years = st.sidebar.multiselect("Year", years, default=years)
+
+cities = sorted(df["City"].dropna().astype(str).unique())
+selected_cities = st.sidebar.multiselect(
+    "City", cities, default=cities[:10] if len(cities) > 10 else cities
+)
+
+statuses = sorted(df["Order_Status"].dropna().astype(str).unique())
+selected_statuses = st.sidebar.multiselect("Order Status", statuses, default=statuses)
+
+filtered = df.copy()
+if selected_years:
+    filtered = filtered[filtered["Year"].isin(selected_years)]
+if selected_cities:
+    filtered = filtered[filtered["City"].isin(selected_cities)]
+if selected_statuses:
+    filtered = filtered[filtered["Order_Status"].isin(selected_statuses)]
+
+# ---------- Helpers ----------
+def money(x):
+    if pd.isna(x):
+        return "₹0"
+    return f"₹{x:,.0f}"
+
+def pct(x):
+    if pd.isna(x):
+        return "0.0%"
+    return f"{x:.1f}%"
+
+def kpi_row(data):
+    orders = len(data)
+    revenue = data["Net_Order_Value_INR"].sum()
+    avg_order = data["Average_Order_Value_INR"].mean()
+    rating = data["Rating"].mean()
+    delivery = data["Estimated_Delivery_Minutes"].mean()
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Orders", f"{orders:,}")
+    c2.metric("Net Revenue", money(revenue))
+    c3.metric("Avg Order Value", money(avg_order))
+    c4.metric("Avg Rating", f"{rating:.2f} / 5")
+    c5.metric("Avg Delivery", f"{delivery:.1f} min")
+
+def chart(fig):
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=20, r=20, t=55, b=20),
+        legend_title_text=""
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+# ---------- Header ----------
+st.markdown("""
+<div class="hero">
+    <h1>🍽️ FoodLens</h1>
+    <p>Zomato Restaurant Data Analysis System · 1,000,000 order records · 2024–2026 dataset</p>
+</div>
+""", unsafe_allow_html=True)
+
+if filtered.empty:
+    st.warning("No records match the selected filters. Please broaden the filters.")
+    st.stop()
+
+# ---------- Overview ----------
+if page == "Overview":
+    st.subheader("📊 Overview")
+    kpi_row(filtered)
+
+    st.markdown("### Revenue & Order Trends")
+    monthly = (
+        filtered.dropna(subset=["Order_Date"])
+        .set_index("Order_Date")
+        .resample("ME")
+        .agg(
+            Orders=("Order_ID", "count"),
+            Revenue=("Net_Order_Value_INR", "sum")
+        )
+        .reset_index()
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        chart(px.line(monthly, x="Order_Date", y="Revenue", markers=True,
+                      title="Monthly Net Revenue (₹)"))
+    with c2:
+        chart(px.bar(monthly, x="Order_Date", y="Orders",
+                     title="Monthly Order Volume"))
+
+    st.markdown("### Business Snapshot")
+    c1, c2 = st.columns(2)
+
+    with c1:
+        city = filtered.groupby("City", as_index=False)["Net_Order_Value_INR"].sum()
+        city = city.sort_values("Net_Order_Value_INR", ascending=False).head(10)
+        chart(px.bar(city, x="Net_Order_Value_INR", y="City", orientation="h",
+                     title="Top Cities by Net Revenue"))
+
+    with c2:
+        cuisine = filtered.groupby("Cuisine", as_index=False)["Net_Order_Value_INR"].sum()
+        cuisine = cuisine.sort_values("Net_Order_Value_INR", ascending=False).head(10)
+        chart(px.bar(cuisine, x="Cuisine", y="Net_Order_Value_INR",
+                     title="Top Cuisines by Net Revenue"))
+
+# ---------- Revenue ----------
 elif page == "Revenue":
-    st.title("Revenue Intelligence 💰")
-    st.caption("Understand how order volume translates into revenue.")
-    c1,c2,c3 = st.columns(3)
-    with c1: st.metric("Revenue", money(revenue))
-    with c2: st.metric("Average order value", money(avg_order))
-    with c3: st.metric("Discounts", money(d["discount"].sum()) if "discount" in d else "—")
+    st.subheader("💰 Revenue Analysis")
+    kpi_row(filtered)
 
-    if "order_date" in d:
-        monthly = d.groupby(pd.Grouper(key="order_date", freq="MS")).agg(revenue=("total_amount","sum"), orders=("order_id","count")).reset_index()
-        fig = px.line(monthly, x="order_date", y="revenue", markers=True, template="plotly_dark", title="Revenue trend")
-        fig.update_traces(line_color="#6fd6b1")
-        fig.update_layout(height=400, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig, use_container_width=True)
-    a,b = st.columns(2)
-    with a:
-        if "city" in d:
-            city_rev = d.groupby("city")["total_amount"].sum().sort_values(ascending=False).reset_index()
-            fig = px.bar(city_rev, x="city", y="total_amount", template="plotly_dark", title="Revenue by city")
-            fig.update_layout(height=360, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
-    with b:
-        if "payment_method" in d:
-            pay = d["payment_method"].value_counts().reset_index()
-            pay.columns = ["payment_method","orders"]
-            fig = px.pie(pay, names="payment_method", values="orders", hole=.58, template="plotly_dark", title="Payment method mix")
-            fig.update_layout(height=360, paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        city_rev = filtered.groupby("City", as_index=False).agg(
+            Revenue=("Net_Order_Value_INR", "sum"),
+            Orders=("Order_ID", "count")
+        ).sort_values("Revenue", ascending=False).head(15)
+        chart(px.bar(city_rev, x="City", y="Revenue",
+                     hover_data=["Orders"], title="Revenue by City"))
 
-# -------------------- Customers --------------------
+    with c2:
+        pay = filtered.groupby("Payment_Method", as_index=False).agg(
+            Revenue=("Net_Order_Value_INR", "sum"),
+            Orders=("Order_ID", "count")
+        ).sort_values("Revenue", ascending=False)
+        chart(px.pie(pay, names="Payment_Method", values="Revenue",
+                     title="Net Revenue by Payment Method", hole=.45))
+
+    monthly = (
+        filtered.dropna(subset=["Order_Date"])
+        .set_index("Order_Date")
+        .resample("ME")
+        .agg(
+            Gross=("Gross_Order_Value_INR", "sum"),
+            Discount=("Discount_Amount_INR", "sum"),
+            Net=("Net_Order_Value_INR", "sum")
+        )
+        .reset_index()
+    )
+    chart(px.line(monthly, x="Order_Date", y=["Gross", "Discount", "Net"],
+                  markers=True, title="Gross Value, Discounts & Net Value Over Time"))
+
+    st.markdown("### Discount Analysis")
+    d1, d2 = st.columns(2)
+    with d1:
+        chart(px.histogram(filtered, x="Discount_Percent", nbins=20,
+                           title="Distribution of Discount Percent"))
+    with d2:
+        disc = filtered.groupby("Discount_Percent", as_index=False)["Net_Order_Value_INR"].mean()
+        chart(px.line(disc, x="Discount_Percent", y="Net_Order_Value_INR",
+                      markers=True, title="Average Net Order Value by Discount %"))
+
+# ---------- Customers ----------
 elif page == "Customers":
-    st.title("Customer Analytics 👥")
-    st.caption("Explore customer frequency, spending and repeat behavior.")
-    if "customer_id" in d:
-        cust = d.groupby("customer_id").agg(
-            orders=("order_id","count"),
-            spend=("total_amount","sum"),
-            avg_order=("total_amount","mean"),
-            avg_rating=("rating","mean") if "rating" in d else ("total_amount","mean")
-        ).reset_index()
-        repeat = (cust["orders"] > 1).mean()*100
-        c1,c2,c3 = st.columns(3)
-        c1.metric("Unique customers", f"{len(cust):,}")
-        c2.metric("Repeat customer share", f"{repeat:.1f}%")
-        c3.metric("Top customer spend", money(cust["spend"].max()))
-        a,b = st.columns(2)
-        with a:
-            fig = px.histogram(cust, x="orders", nbins=max(8,int(cust["orders"].max())), template="plotly_dark", title="Orders per customer")
-            fig.update_layout(height=360, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
-        with b:
-            fig = px.scatter(cust, x="orders", y="spend", size="spend", hover_data=["customer_id"], template="plotly_dark", title="Customer frequency vs spending")
-            fig.update_layout(height=360, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("Your dataset needs a customer_id column for customer analytics.")
+    st.subheader("👥 Customer Analysis")
 
-# -------------------- Delivery --------------------
+    customer = filtered.groupby("Customer_ID", as_index=False).agg(
+        Orders=("Order_ID", "count"),
+        Total_Spend=("Net_Order_Value_INR", "sum"),
+        Avg_Order_Value=("Average_Order_Value_INR", "mean")
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Unique Customers", f"{customer['Customer_ID'].nunique():,}")
+    c2.metric("Avg Orders / Customer", f"{customer['Orders'].mean():.2f}")
+    c3.metric("Avg Customer Spend", money(customer["Total_Spend"].mean()))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        chart(px.histogram(customer, x="Orders", nbins=20,
+                           title="Orders per Customer"))
+    with c2:
+        top_customers = customer.nlargest(15, "Total_Spend")
+        chart(px.bar(top_customers, x="Total_Spend", y="Customer_ID",
+                     orientation="h", title="Top Customers by Net Spend"))
+
+    st.markdown("### Customer Segmentation")
+    customer["Segment"] = pd.cut(
+        customer["Orders"],
+        bins=[-1, 1, 3, 7, np.inf],
+        labels=["1 order", "2–3 orders", "4–7 orders", "8+ orders"]
+    )
+    segments = customer.groupby("Segment", observed=False).size().reset_index(name="Customers")
+    chart(px.pie(segments, names="Segment", values="Customers",
+                 title="Customers by Order-Frequency Segment", hole=.45))
+
+# ---------- Delivery ----------
 elif page == "Delivery":
-    st.title("Delivery Performance 🚚")
-    st.caption("Analyze speed, ratings and the relationship between delivery experience and satisfaction.")
-    if "delivery_time_min" in d:
-        c1,c2,c3 = st.columns(3)
-        c1.metric("Average delivery", f"{d.delivery_time_min.mean():.1f} min")
-        c2.metric("Fastest delivery", f"{d.delivery_time_min.min():.0f} min")
-        c3.metric("Slowest delivery", f"{d.delivery_time_min.max():.0f} min")
-        a,b = st.columns(2)
-        with a:
-            fig = px.histogram(d, x="delivery_time_min", nbins=20, template="plotly_dark", title="Delivery time distribution")
-            fig.update_layout(height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
-        with b:
-            if "rating" in d:
-                fig = px.scatter(d.sample(min(1500,len(d)), random_state=42), x="delivery_time_min", y="rating", trendline="ols", opacity=.55, template="plotly_dark", title="Delivery time vs rating")
-                fig.update_layout(height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-                st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("Your dataset needs delivery_time_min for delivery analytics.")
+    st.subheader("🛵 Delivery Analysis")
 
-# -------------------- Food & Locations --------------------
-elif page == "Food & Locations":
-    st.title("Food & Location Intelligence 🍕📍")
-    st.caption("See what people order and where the business performs.")
-    a,b = st.columns(2)
-    with a:
-        if "food_category" in d:
-            cat = d.groupby("food_category").agg(orders=("order_id","count"), revenue=("total_amount","sum")).reset_index().sort_values("revenue", ascending=False)
-            fig = px.bar(cat, x="revenue", y="food_category", orientation="h", template="plotly_dark", title="Revenue by food category")
-            fig.update_layout(height=430, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
-    with b:
-        if "city" in d:
-            city = d.groupby("city").agg(orders=("order_id","count"), revenue=("total_amount","sum")).reset_index().sort_values("orders", ascending=False)
-            fig = px.bar(city, x="orders", y="city", orientation="h", template="plotly_dark", title="Orders by city")
-            fig.update_layout(height=430, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
-    if "restaurant" in d and "food_category" in d:
-        rest = d.groupby("restaurant").agg(orders=("order_id","count"), revenue=("total_amount","sum")).reset_index().sort_values("revenue", ascending=False)
-        st.subheader("Restaurant performance")
-        st.dataframe(rest, use_container_width=True, hide_index=True)
+    delivered = filtered[filtered["Order_Status"].astype(str).str.lower().eq("delivered")]
+    kpi_row(filtered)
 
-# -------------------- Dataset --------------------
-elif page == "Dataset":
-    st.title("Dataset Explorer 📁")
-    st.caption("Upload a CSV from the sidebar or inspect the included sample dataset.")
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Rows", f"{len(data):,}")
-    c2.metric("Columns", f"{len(data.columns):,}")
-    c3.metric("Missing values", f"{int(data.isna().sum().sum()):,}")
-    c4.metric("Duplicate rows", f"{int(data.duplicated().sum()):,}")
-    st.subheader("Data preview")
-    st.dataframe(data.head(100), use_container_width=True, hide_index=True)
-    st.subheader("Column summary")
-    summary = pd.DataFrame({
-        "column": data.columns,
-        "dtype": [str(data[c].dtype) for c in data.columns],
-        "missing": [int(data[c].isna().sum()) for c in data.columns],
-        "unique": [int(data[c].nunique(dropna=True)) for c in data.columns],
-    })
-    st.dataframe(summary, use_container_width=True, hide_index=True)
-    st.download_button("Download current dataset", data=data.to_csv(index=False).encode("utf-8"), file_name="foodlens_dataset.csv", mime="text/csv")
+    c1, c2 = st.columns(2)
+    with c1:
+        chart(px.histogram(filtered, x="Estimated_Delivery_Minutes", nbins=30,
+                           title="Estimated Delivery Time Distribution"))
+    with c2:
+        city_delivery = filtered.groupby("City", as_index=False).agg(
+            Avg_Delivery=("Estimated_Delivery_Minutes", "mean"),
+            Orders=("Order_ID", "count")
+        ).sort_values("Avg_Delivery", ascending=False).head(15)
+        chart(px.bar(city_delivery, x="City", y="Avg_Delivery",
+                     hover_data=["Orders"], title="Average Delivery Time by City"))
 
-# -------------------- About --------------------
-else:
-    st.title("About FoodLens 🍔")
+    status = filtered.groupby("Order_Status", as_index=False).size()
+    status.columns = ["Order_Status", "Orders"]
+    chart(px.pie(status, names="Order_Status", values="Orders",
+                 title="Order Status Distribution", hole=.45))
+
+    if not delivered.empty:
+        st.markdown("### Delivery Time vs Rating")
+        sample = delivered[["Estimated_Delivery_Minutes", "Rating"]].dropna()
+        if len(sample) > 50000:
+            sample = sample.sample(50000, random_state=42)
+        chart(px.scatter(sample, x="Estimated_Delivery_Minutes", y="Rating",
+                         opacity=.35, title="Delivery Time vs Rating"))
+
+# ---------- Restaurants & Food ----------
+elif page == "Restaurants & Food":
+    st.subheader("🍛 Restaurant & Food Analysis")
+    kpi_row(filtered)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        cuisine = filtered.groupby("Cuisine", as_index=False).agg(
+            Orders=("Order_ID", "count"),
+            Revenue=("Net_Order_Value_INR", "sum"),
+            Rating=("Rating", "mean")
+        ).sort_values("Orders", ascending=False).head(15)
+        chart(px.bar(cuisine, x="Cuisine", y="Orders",
+                     hover_data=["Revenue", "Rating"],
+                     title="Most Ordered Cuisines"))
+    with c2:
+        rating = filtered.groupby("Rating", as_index=False)["Order_ID"].count()
+        rating.columns = ["Rating", "Orders"]
+        chart(px.bar(rating, x="Rating", y="Orders",
+                     title="Rating Distribution"))
+
+    st.markdown("### Restaurant Performance")
+    restaurant = filtered.groupby(
+        ["Restaurant_ID", "Restaurant_Name"], as_index=False
+    ).agg(
+        Orders=("Order_ID", "count"),
+        Revenue=("Net_Order_Value_INR", "sum"),
+        Avg_Rating=("Rating", "mean"),
+        Avg_Delivery=("Estimated_Delivery_Minutes", "mean")
+    ).sort_values("Revenue", ascending=False).head(20)
+
+    chart(px.bar(restaurant.sort_values("Revenue"), x="Revenue", y="Restaurant_Name",
+                  orientation="h", hover_data=["Orders", "Avg_Rating", "Avg_Delivery"],
+                  title="Top Restaurants by Net Revenue"))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        area = filtered.groupby("Area", as_index=False)["Net_Order_Value_INR"].sum()
+        area = area.nlargest(15, "Net_Order_Value_INR")
+        chart(px.bar(area, x="Net_Order_Value_INR", y="Area", orientation="h",
+                     title="Top Areas by Net Revenue"))
+    with c2:
+        rt = filtered.groupby("Restaurant_Type", as_index=False).size()
+        rt.columns = ["Restaurant_Type", "Orders"]
+        chart(px.pie(rt, names="Restaurant_Type", values="Orders",
+                     title="Orders by Restaurant Type", hole=.45))
+
+# ---------- Data Explorer ----------
+elif page == "Data Explorer":
+    st.subheader("🔎 Dataset Explorer")
+    st.caption("The dashboard uses the actual Zomato_Restaurant_Data2024_2026 dataset.")
+
+    search = st.text_input("Search restaurant, city, cuisine, area or customer ID")
+    display = filtered
+
+    if search:
+        mask = (
+            display["Restaurant_Name"].astype(str).str.contains(search, case=False, na=False)
+            | display["City"].astype(str).str.contains(search, case=False, na=False)
+            | display["Cuisine"].astype(str).str.contains(search, case=False, na=False)
+            | display["Area"].astype(str).str.contains(search, case=False, na=False)
+            | display["Customer_ID"].astype(str).str.contains(search, case=False, na=False)
+        )
+        display = display[mask]
+
+    st.write(f"Showing **{min(len(display), 1000):,}** rows of **{len(display):,}** matching records.")
+    st.dataframe(display.head(1000), use_container_width=True, height=520)
+
+    st.download_button(
+        "⬇️ Download filtered data",
+        data=display.to_csv(index=False).encode("utf-8"),
+        file_name="foodlens_filtered_zomato_data.csv",
+        mime="text/csv"
+    )
+
+# ---------- About ----------
+elif page == "About":
+    st.subheader("ℹ️ About FoodLens")
+
     st.markdown("""
-    **FoodLens** is a Python-based Food Delivery Data Analysis System designed as an academic project for **Data Analysis Essentials**.
+    **FoodLens — Zomato Restaurant Data Analysis System** is a Streamlit-based
+    analytics dashboard built for the Zomato restaurant/order dataset.
 
-    ### What the project demonstrates
-    - Data loading and cleaning with **Pandas**
-    - Descriptive and exploratory data analysis
-    - Interactive visualization with **Plotly**
-    - Customer, revenue, food, location and delivery analytics
-    - CSV dataset upload and automatic dashboard refresh
-    - A responsive, presentation-ready analytics interface
+    ### Dataset
+    - **Records:** 1,000,000
+    - **Fields:** 25
+    - **Coverage:** 2024–2026 dataset
+    - **Source file:** `Zomato_Restaurant_Data2024_2026.csv`
 
-    ### Expected dataset columns
-    The sample dataset uses:
-    `order_id`, `order_date`, `customer_id`, `city`, `restaurant`,
-    `food_category`, `items`, `subtotal`, `delivery_fee`, `discount`,
-    `total_amount`, `delivery_time_min`, `rating`, `payment_method`, `order_status`.
+    ### Analysis areas
+    - Revenue and order trends
+    - Customer behaviour
+    - Delivery performance
+    - Restaurant and cuisine performance
+    - Payment methods
+    - Discounts
+    - Ratings
+    - Cities and areas
+    - Interactive data exploration
 
-    You can upload a CSV with similar columns. The dashboard gracefully hides analyses when a required field is missing.
+    ### Technology
+    **Python · Pandas · NumPy · Plotly · Streamlit**
     """)
-    st.info("Tip: For your final college presentation, explain the pipeline as Raw Data → Cleaning → Analysis → Visualization → Insights.")
+
+    st.markdown("### Dataset Columns")
+    st.dataframe(pd.DataFrame({"Column": df.columns}), use_container_width=True)
+
+st.caption("FoodLens • Zomato Restaurant Data Analysis System")

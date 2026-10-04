@@ -41,7 +41,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-DATA_PATH = "data/Zomato_Restaurant_Data2024_2026.csv"
+DATA_PATH = "data/Zomato_Restaurant_Data2024_202612.csv"
 
 EXPECTED = [
     "Order_ID", "Order_Date", "Year", "Customer_ID", "Restaurant_ID",
